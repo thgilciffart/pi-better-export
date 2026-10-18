@@ -3,4 +3,4 @@ node_modules/
 coverage/
 
 # Local reference session; may contain private conversation content.
-/pi-session.html
+/pi-session*.html

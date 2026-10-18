@@ -10,6 +10,7 @@ import { enhanceHtml } from '../src/enhance.ts';
 import { exportCommand } from '../index.ts';
 
 const { exportSessionToHtml } = await import(pathToFileURL(join(getPackageDir(), 'dist/core/export-html/index.js')).href);
+const { getThemeByName } = await import(pathToFileURL(join(getPackageDir(), 'dist/modes/interactive/theme/theme.js')).href);
 initTheme('dark');
 
 async function fixture() {
@@ -71,6 +72,10 @@ test('native export renders inline/display math offline and preserves Pi viewer 
     display.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await new Promise(resolve => setTimeout(resolve, 0));
     assert.equal(copied, String.raw`\frac{a}{b} = \sqrt{2}`);
+    let printed = false;
+    dom.window.print = () => { printed = true; };
+    doc.querySelector('[data-better-export-print]')!.click();
+    assert.equal(printed, true);
   } finally { dom?.window.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -87,7 +92,7 @@ test('command writes enhanced native HTML before asking to open and honors decli
     const ctx = {
       cwd: dir, sessionManager: sm, hasUI: true,
       waitForIdle: async () => {}, getSystemPrompt: () => 'test system prompt',
-      ui: { theme: { name: 'dark' }, notify: (message: string) => notifications.push(message), confirm: async (title: string) => {
+      ui: { theme: getThemeByName('dark')!, notify: (message: string) => notifications.push(message), confirm: async (title: string) => {
         prompts.push(title);
         assert.match(await readFile(target, 'utf8'), /id="pi-better-export"/);
         return false;

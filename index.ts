@@ -6,16 +6,20 @@ import open from 'open';
 import type { ExtensionAPI, ExtensionCommandContext } from '@earendil-works/pi-coding-agent';
 import { enhanceHtml } from './src/enhance.ts';
 import { nativeExport } from './src/native-export.ts';
+import { parseOptions } from './src/options.ts';
+import { conversationOnly, readSessionData, writeSessionData } from './src/session.ts';
+import { redactSession, reviewRedactions } from './src/redact.ts';
 
 export async function exportCommand(pi: ExtensionAPI, args: string, ctx: ExtensionCommandContext): Promise<void> {
   let staging: string | undefined;
   try {
     await ctx.waitForIdle();
     if (!ctx.sessionManager.getSessionFile()) throw new Error('Nothing to export yet. Start a conversation first.');
-    let filename = args.trim();
-    if ((filename.startsWith('"') && filename.endsWith('"')) || (filename.startsWith("'") && filename.endsWith("'"))) filename = filename.slice(1, -1);
+    const options = parseOptions(args);
+    if (options.redact && !ctx.hasUI) throw new Error('Redaction preview requires an interactive Pi UI.');
+    let filename = options.filename;
     filename ||= `pi-session-${new Date().toISOString().replace(/[:.]/g, '-')}.html`;
-    if (!/\.html?$/i.test(filename)) throw new Error('Choose an .html or .htm file. Usage: /better-export [file.html]');
+    if (!/\.html?$/i.test(filename)) throw new Error('Choose an .html or .htm file. Usage: /better-export [--conversation] [--redact] [file.html]');
     if (filename.startsWith('~/')) filename = join(homedir(), filename.slice(2));
     const target = resolve(ctx.cwd, filename);
     try {
@@ -29,7 +33,19 @@ export async function exportCommand(pi: ExtensionAPI, args: string, ctx: Extensi
     staging = await mkdtemp(join(dirname(target), '.pi-better-export-'));
     const temporary = join(staging, 'session.html');
     await nativeExport(pi, ctx, temporary);
-    await writeFile(temporary, await enhanceHtml(await readFile(temporary, 'utf8')), 'utf8');
+    let html = await readFile(temporary, 'utf8');
+    if (options.conversation || options.redact) {
+      let data = readSessionData(html);
+      if (options.conversation) data = conversationOnly(data);
+      if (options.redact) {
+        const redacted = redactSession(data, { home: homedir(), cwd: ctx.cwd, literals: options.literals });
+        if (!await reviewRedactions(ctx, redacted.findings)) return;
+        data = redacted.data;
+      }
+      html = writeSessionData(html, data);
+      if (options.conversation) html = html.replace(/<html\b/, '<html data-better-export-conversation="true"');
+    }
+    await writeFile(temporary, await enhanceHtml(html), 'utf8');
     await rename(temporary, target);
     ctx.ui.notify(`Exported to ${target}`, 'info');
     if (ctx.hasUI && await ctx.ui.confirm('Open exported HTML?', 'Open this export in your default browser?')) {
@@ -48,7 +64,7 @@ export async function exportCommand(pi: ExtensionAPI, args: string, ctx: Extensi
 
 export default function betterExport(pi: ExtensionAPI): void {
   pi.registerCommand('better-export', {
-    description: 'Export native Pi HTML with offline LaTeX and optional browser preview',
+    description: 'Export Pi HTML with LaTeX, print/PDF, --conversation, --redact, or --share',
     handler: (args, ctx) => exportCommand(pi, args, ctx),
   });
 }
